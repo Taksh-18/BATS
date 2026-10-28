@@ -12,3 +12,6 @@ BATS_Project_Context.md
 
 # written at deploy time
 backend/.app_role_ready
+
+# Vercel project link (local)
+.vercel

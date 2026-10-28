@@ -7,7 +7,7 @@ BATS has two halves that deploy to different places:
 | Web pages (`frontend/`: `index.html`, `hms.html`) | **Vercel** | static files |
 | API + PostgreSQL (`backend/`) | **Render** (`render.yaml`) | needs an always-on process, background jobs and a real database; Vercel serverless can't run these |
 
-Vercel forwards `/api/*`, `/mock-hms/*` and `/health` to the Render API (see `vercel.json`), so the browser
+Vercel forwards `/api/*`, `/mock-hms/*` and `/health` to the Render API (see `frontend/vercel.json`), so the browser
 only ever talks to one address and no CORS is needed.
 
 ## 1. Backend on Render
@@ -26,9 +26,9 @@ owner. Both work; the first is the stronger setup. Some hosts don't allow the ow
 
 ## 2. Pages on Vercel
 
-1. In `vercel.json`, replace every `BACKEND_HOST` with the Render host (no `https://`), e.g. `bats-api-xxxx.onrender.com`.
+1. In `frontend/vercel.json`, replace every `BACKEND_HOST` with the Render host (no `https://`), e.g. `bats-api-xxxx.onrender.com`.
 2. Deploy: `vercel deploy --prod` (after `vercel login`), or import the repo at https://vercel.com/new
-   (framework preset "Other"; `vercel.json` sets everything else).
+   (framework preset "Other"; `frontend/vercel.json` sets everything else; set the Root Directory to `frontend`).
 
 ## 3. After deploying
 
