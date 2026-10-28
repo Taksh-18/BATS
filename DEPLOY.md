@@ -30,6 +30,11 @@ owner. Both work; the first is the stronger setup. Some hosts don't allow the ow
 2. Deploy: `vercel deploy --prod` (after `vercel login`), or import the repo at https://vercel.com/new
    (framework preset "Other"; `frontend/vercel.json` sets everything else; set the Root Directory to `frontend`).
 
+**Gotcha: do not let Vercel auto-deploy from the repo root.** `vercel link` quietly connects the GitHub repo.
+If it does, every `git push` deploys from the repo root, where the pages aren't, and the live site turns into a
+404. Either run `vercel git disconnect` (what this project does; then deploy with `vercel deploy --prod` from
+`frontend/`), or set the project's **Root Directory** to `frontend` in Vercel's settings and keep Git connected.
+
 ## 3. After deploying
 
 - Sign in at the Vercel URL as `staff_meera` with the nurse password from step 1.4.
