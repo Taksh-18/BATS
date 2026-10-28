@@ -58,6 +58,15 @@
         </section>
     </main>
 
+    <dialog id="token-dialog" class="rounded-2xl p-0 w-full max-w-sm shadow-2xl backdrop:bg-slate-900/50">
+        <form method="dialog" id="token-form" class="p-6 space-y-4">
+            <h3 class="font-bold text-slate-800">HMS console access</h3>
+            <p class="text-xs text-slate-500">This hospital system is protected. Enter the access token (the <code>MOCK_HMS_TOKEN</code> set on the server).</p>
+            <input id="token-input" type="password" autocomplete="off" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" aria-label="HMS access token">
+            <div class="flex justify-end"><button type="submit" class="px-4 py-2 rounded-lg bg-sky-800 hover:bg-sky-900 text-white text-xs font-semibold">Unlock</button></div>
+        </form>
+    </dialog>
+
     <dialog id="return-dialog" class="rounded-2xl p-0 w-full max-w-sm shadow-2xl backdrop:bg-slate-900/50">
         <form method="dialog" id="return-form" class="p-6 space-y-4">
             <h3 class="font-bold text-slate-800">Return unit to blood bank</h3>

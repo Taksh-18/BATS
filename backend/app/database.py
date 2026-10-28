@@ -4,8 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+from app.dburl import APP_ROLE_MARKER, normalize
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+_use_app_role = bool(settings.app_db_password) and APP_ROLE_MARKER.exists()
+_url, _connect_args = normalize(settings.database_url, settings.app_db_password if _use_app_role else "")
+engine = create_async_engine(_url, connect_args=_connect_args, pool_pre_ping=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

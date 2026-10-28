@@ -4,11 +4,12 @@ It receives issuance events from BATS (webhook) and lets a user record what happ
 unit; those updates are sent back to BATS server-to-server with the shared API key, exactly
 as a real HMS integration would. Unauthenticated by design: disable with ENABLE_MOCK_HMS=false.
 """
+import hmac
 import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -20,6 +21,17 @@ from app.models import MockHmsEvent
 from app.schemas import HMSIssueEvent, HMSStatus
 
 router = APIRouter(prefix="/mock-hms", tags=["mock-hms"])
+
+
+def require_console_token(x_mock_hms_token: str | None = Header(None)) -> None:
+    """On a public deployment this simulated HMS can change real stock, so it needs a token.
+    Unset (local demos) means open."""
+    expected = settings.mock_hms_token
+    if expected and not (x_mock_hms_token and hmac.compare_digest(x_mock_hms_token.encode(), expected.encode())):
+        raise HTTPException(status_code=401, detail="HMS console token required")
+
+
+token_guard = [Depends(require_console_token)]
 
 _state = {"online": True}
 
@@ -34,7 +46,7 @@ def _view(row: MockHmsEvent) -> dict:
             "received_at": row.received_at, "resolved_at": row.resolved_at, **row.payload}
 
 
-@router.post("/webhook", status_code=202)
+@router.post("/webhook", status_code=202, dependencies=token_guard)
 async def receive_issue_event(event: HMSIssueEvent, db: AsyncSession = Depends(get_db)) -> dict[str, str]:
     _require_online()
     reference = f"HMS-{uuid.uuid4().hex[:10].upper()}"
@@ -52,7 +64,7 @@ async def receive_issue_event(event: HMSIssueEvent, db: AsyncSession = Depends(g
     return {"status": "received", "hms_reference": reference}
 
 
-@router.get("/events")
+@router.get("/events", dependencies=token_guard)
 async def list_events(db: AsyncSession = Depends(get_db)) -> list[dict]:
     """The HMS inbox, newest first."""
     rows = (await db.execute(
@@ -94,12 +106,12 @@ async def _resolve(db: AsyncSession, event_id: int, action: str, new_state: str,
     return _view(row)
 
 
-@router.post("/events/{event_id}/transfused")
+@router.post("/events/{event_id}/transfused", dependencies=token_guard)
 async def record_transfusion(event_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     return await _resolve(db, event_id, "unit_transfused", "Transfused")
 
 
-@router.post("/events/{event_id}/returned")
+@router.post("/events/{event_id}/returned", dependencies=token_guard)
 async def return_unit(event_id: int, body: ReturnBody, db: AsyncSession = Depends(get_db)) -> dict:
     return await _resolve(db, event_id, "unit_returned", "Returned", body.cold_chain_ok)
 
@@ -109,7 +121,7 @@ async def status() -> HMSStatus:
     return HMSStatus(online=_state["online"], endpoint=settings.hms_webhook_url)
 
 
-@router.post("/toggle", response_model=HMSStatus)
+@router.post("/toggle", response_model=HMSStatus, dependencies=token_guard)
 async def toggle() -> HMSStatus:
     """Simulate an HMS outage / recovery so the failure path can be demonstrated."""
     _state["online"] = not _state["online"]

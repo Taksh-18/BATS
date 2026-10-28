@@ -40,7 +40,7 @@ async function request(path, { method = "GET", body } = {}) {
 
   const message = Array.isArray(d) ? d.map((e) => e.msg).join("; ") : d || `Request failed (${resp.status})`;
   // A 401 with no rule code means our own session is gone (verifier failures use 403 + a rule).
-  if (resp.status === 401 && path !== "/api/v1/auth/login") onSessionExpired();
+  if (resp.status === 401 && path.startsWith("/api/") && path !== "/api/v1/auth/login") onSessionExpired();
   throw new ApiError(resp.status, null, message);
 }
 

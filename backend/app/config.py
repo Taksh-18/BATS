@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     audit_verify_interval_seconds: int = 300
     hms_retry_interval_seconds: int = 10
     hms_api_key: str  # shared secret the HMS presents when calling BATS; required
+    app_env: str = "development"  # "production" refuses to seed well-known demo passwords
+    mock_hms_token: str = ""  # when set, mock-HMS calls need it (X-Mock-HMS-Token); set it on any public deployment
+    app_db_password: str = ""  # optional: connect as the limited bats_app role instead of the database owner
     enable_mock_hms: bool = False  # unauthenticated simulation: enable only for demos
     enable_docs: bool = False  # /docs and /openapi.json describe the whole API: enable only in development
     enable_hsts: bool = False  # set true when served over HTTPS

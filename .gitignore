@@ -9,3 +9,6 @@ __pycache__/
 
 # personal details (registration number): kept local
 BATS_Project_Context.md
+
+# written at deploy time
+backend/.app_role_ready

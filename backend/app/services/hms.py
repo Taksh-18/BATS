@@ -12,8 +12,10 @@ async def notify_issue(event: HMSIssueEvent) -> bool:
     """Push an issuance event to the hospital's HMS. Returns False on any failure."""
     try:
         async with httpx.AsyncClient(timeout=settings.hms_timeout_seconds) as client:
-            resp = await client.post(settings.hms_webhook_url, content=event.model_dump_json(),
-                                     headers={"Content-Type": "application/json"})
+            headers = {"Content-Type": "application/json"}
+            if settings.mock_hms_token:
+                headers["X-Mock-HMS-Token"] = settings.mock_hms_token
+            resp = await client.post(settings.hms_webhook_url, content=event.model_dump_json(), headers=headers)
             resp.raise_for_status()
         return True
     except httpx.HTTPError as exc:

@@ -11,16 +11,24 @@ let online = true;
 let busy = false;
 let returning = null; // event being returned, while the dialog is open
 
+// The HMS console token lives only in this tab's sessionStorage and is sent on every call.
+const getToken = () => { try { return sessionStorage.getItem("hms_token") || ""; } catch { return ""; } };
+const setToken = (t) => { try { sessionStorage.setItem("hms_token", t); } catch { /* ignore */ } };
+
 async function call(path, method = "GET", body) {
+  const headers = { "Content-Type": "application/json" };
+  if (getToken()) headers["X-Mock-HMS-Token"] = getToken();
   let resp;
   try {
-    resp = await fetch(API_BASE + path, {
-      method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
-    });
+    resp = await fetch(API_BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   } catch {
     throw new Error("Cannot reach the server.");
   }
   const data = await resp.json().catch(() => null);
+  if (resp.status === 401) {
+    if (!$("token-dialog").open) $("token-dialog").showModal();
+    throw new Error("Enter the HMS access token to continue.");
+  }
   if (!resp.ok) throw new Error((data && typeof data.detail === "string" && data.detail) || `Request failed (${resp.status})`);
   return data;
 }
@@ -91,6 +99,12 @@ document.addEventListener("click", (e) => {
     $("cold-chain").checked = true;
     $("return-dialog").showModal();
   }
+});
+
+$("token-form").addEventListener("submit", () => {
+  setToken($("token-input").value);
+  $("token-input").value = "";
+  refresh();
 });
 
 $("return-cancel").addEventListener("click", () => $("return-dialog").close());

@@ -1,9 +1,12 @@
-"""Demo data for local development. Run after sql/schema.sql:  python -m app.seed
+"""Demo data. Run after sql/schema.sql:  python -m app.seed
 
-Both demo accounts share one well-known password, so never run this against a real deployment.
+Development: every account gets one well-known password (never expose that to the internet).
+Production (APP_ENV=production): each account's password must come from SEED_PASSWORD_NURSE,
+SEED_PASSWORD_TECHNICIAN and SEED_PASSWORD_ADMIN (12+ characters); the well-known one is refused.
 """
 import asyncio
 import hashlib
+import os
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -16,6 +19,17 @@ from app.timeutil import today as day_today
 from app.services import audit
 
 DEMO_PASSWORD = "Bats@123"
+
+
+def account_passwords() -> dict[str, str]:
+    roles = ("NURSE", "TECHNICIAN", "ADMIN")
+    if settings.app_env != "production":
+        return {r: DEMO_PASSWORD for r in roles}
+    found = {r: os.environ.get(f"SEED_PASSWORD_{r}", "") for r in roles}
+    weak = [r for r, v in found.items() if len(v) < 12 or v == DEMO_PASSWORD]
+    if weak:
+        raise SystemExit(f"APP_ENV=production: set strong (12+ char) SEED_PASSWORD_* for {', '.join(weak)}")
+    return found
 
 # (blood_type, component, collected N days ago, expires in N days, status)
 UNITS = [
@@ -49,13 +63,13 @@ async def main() -> None:
         db.add_all([hospital, bank])
         await db.flush()
 
-        pw = hash_password(DEMO_PASSWORD)
+        pws = {r: hash_password(p) for r, p in account_passwords().items()}
         meera = HospitalStaff(full_name="Meera Sharma", role="Nurse", username="staff_meera",
-                              password_hash=pw, hospital_id=hospital.hospital_id)
+                              password_hash=pws["NURSE"], hospital_id=hospital.hospital_id)
         rohit = HospitalStaff(full_name="Rohit Mehta", role="Technician", username="staff_rohit",
-                              password_hash=pw, hospital_id=hospital.hospital_id)
+                              password_hash=pws["TECHNICIAN"], hospital_id=hospital.hospital_id)
         admin = HospitalStaff(full_name="Anita Rao", role="Blood Bank Admin", username="staff_admin",
-                              password_hash=pw, hospital_id=hospital.hospital_id)
+                              password_hash=pws["ADMIN"], hospital_id=hospital.hospital_id)
         donor = Donor(full_name="Rahul Singh", blood_type="A+", contact_number="9800000001",
                       email="rahul@example.com", date_of_birth=date(1995, 4, 12))
         db.add_all([meera, rohit, admin, donor])
@@ -77,7 +91,11 @@ async def main() -> None:
 
         await audit.record(db, None, "system", "SYSTEM_SEED", "demo data loaded")
         await db.commit()
-        print(f"Seeded. Demo logins: staff_meera (Nurse), staff_rohit (Technician), staff_admin (Blood Bank Admin); password {DEMO_PASSWORD}")
+        if settings.app_env == "production":
+            print("Seeded. Accounts: staff_meera (Nurse), staff_rohit (Technician), staff_admin (Blood Bank Admin); "
+                  "passwords are the SEED_PASSWORD_* values.")
+        else:
+            print(f"Seeded. Demo logins: staff_meera (Nurse), staff_rohit (Technician), staff_admin (Blood Bank Admin); password {DEMO_PASSWORD}")
     await engine.dispose()
 
 

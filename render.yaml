@@ -1,0 +1,54 @@
+# Render Blueprint: the BATS API + its PostgreSQL database. The web pages go on Vercel (see vercel.json).
+# Free-tier notes: the web service sleeps after ~15 min idle (first request is slow, background jobs
+# pause while asleep) and the free database expires after 30 days. Use paid plans for anything real.
+databases:
+  - name: bats-db
+    plan: free
+    databaseName: bats
+    user: bats
+
+services:
+  - type: web
+    name: bats-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.deploy_init && uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bats-db
+          property: connectionString
+      - key: APP_ENV
+        value: production
+      # Secrets Render generates once and keeps in the dashboard (Environment tab)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: HMS_API_KEY
+        generateValue: true
+      - key: MOCK_HMS_TOKEN
+        generateValue: true
+      - key: APP_DB_PASSWORD        # makes the app run as the least-privilege bats_app role
+        generateValue: true
+      - key: SEED_PASSWORD_NURSE
+        generateValue: true
+      - key: SEED_PASSWORD_TECHNICIAN
+        generateValue: true
+      - key: SEED_PASSWORD_ADMIN
+        generateValue: true
+      - key: ENABLE_MOCK_HMS        # the placeholder hospital system; protected by MOCK_HMS_TOKEN
+        value: "true"
+      - key: ENABLE_DOCS
+        value: "false"
+      - key: ENABLE_HSTS
+        value: "true"
+      - key: TRUSTED_PROXY_COUNT    # Render's load balancer + Vercel's rewrite = 2 hops in front of the app
+        value: "2"
+      - key: BATS_INBOUND_URL       # the app calls itself; Render serves web services on port 10000
+        value: http://localhost:10000/api/v1/hms/inbound
+      - key: HMS_WEBHOOK_URL
+        value: http://localhost:10000/mock-hms/webhook
