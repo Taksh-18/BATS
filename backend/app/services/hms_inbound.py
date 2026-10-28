@@ -17,12 +17,13 @@ class InboundError(Exception):
         self.message = message
 
 
-async def apply(db: AsyncSession, ev: HMSInboundEvent) -> str:
-    """Returns "applied" or "duplicate". Raises InboundError if the update makes no sense."""
+async def apply(db: AsyncSession, hospital_id: int, ev: HMSInboundEvent) -> str:
+    """`hospital_id` is the hospital that owns the API key used for this call. Returns "applied" or
+    "duplicate". Raises InboundError if the update makes no sense or isn't this hospital's unit."""
     # Claim the event key first: a replay hits the conflict and changes nothing.
     claimed = (await db.execute(
         pg_insert(HmsInbound)
-        .values(inbound_key=ev.event_ref, unit_id=ev.unit_id, action=ev.action)
+        .values(inbound_key=f"{hospital_id}:{ev.event_ref}", unit_id=ev.unit_id, action=ev.action)
         .on_conflict_do_nothing(index_elements=["inbound_key"])
         .returning(HmsInbound.inbound_key)
     )).scalar_one_or_none()
@@ -37,21 +38,22 @@ async def apply(db: AsyncSession, ev: HMSInboundEvent) -> str:
     if unit.status != "Issued":
         raise InboundError(409, f"Unit {unit.unit_id} is {unit.status}; only an Issued unit can be {ev.action[5:]}")
 
+    issue = (await db.execute(select(BloodIssue).where(BloodIssue.unit_id == unit.unit_id))).scalar_one()
+    requisition = (await db.execute(
+        select(BloodRequisition).where(BloodRequisition.requisition_id == issue.requisition_id).with_for_update()
+    )).scalar_one()
+    if requisition.hospital_id != hospital_id:
+        # Same shape as "unknown unit" on purpose: don't reveal other hospitals' units.
+        raise InboundError(404, f"Unit {unit.unit_id} not found")
+
     if ev.action == "unit_transfused":
         unit.status = "Transfused"
         await audit.record(db, None, "hms", "HMS_TRANSFUSED",
-                           f"hospital HMS reports unit {unit.unit_id} ({unit.blood_type}) transfused")
+                           f"hospital {hospital_id} HMS reports unit {unit.unit_id} ({unit.blood_type}) transfused")
     else:
-        issue = (await db.execute(
-            select(BloodIssue).where(BloodIssue.unit_id == unit.unit_id)
-        )).scalar_one()
         issue.returned_at = datetime.now(timezone.utc)
         # A returned bag is never put straight back on the shelf: it must be re-inspected.
         unit.status = "Quarantined"
-
-        requisition = (await db.execute(
-            select(BloodRequisition).where(BloodRequisition.requisition_id == issue.requisition_id).with_for_update()
-        )).scalar_one()
         kept = (await db.execute(
             select(func.count()).select_from(BloodIssue)
             .where(BloodIssue.requisition_id == requisition.requisition_id, BloodIssue.returned_at.is_(None))
@@ -61,7 +63,7 @@ async def apply(db: AsyncSession, ev: HMSInboundEvent) -> str:
                                   else "Partially Fulfilled" if kept > 0 else "Pending")
         cold = "cold chain intact" if ev.cold_chain_ok else "COLD CHAIN BROKEN"
         await audit.record(db, None, "hms", "HMS_RETURNED",
-                           f"hospital HMS returned unit {unit.unit_id} ({unit.blood_type}), {cold}; "
+                           f"hospital {hospital_id} HMS returned unit {unit.unit_id} ({unit.blood_type}), {cold}; "
                            f"quarantined for inspection, requisition {requisition.requisition_id} now {requisition.status}")
     await db.commit()
     return "applied"

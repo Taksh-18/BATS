@@ -4,14 +4,17 @@ const $ = (id) => document.getElementById(id);
 const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
 const RULE_HINTS = {
-  verifier_auth_failed: "The verifier's username or password is incorrect.",
+  password_incorrect: "Your password is incorrect.",
   unit_unavailable: "That unit is not available for issue.",
-  unit_expired: "That unit has expired and cannot be issued.",
-  same_staff: "The issuer and verifier must be two different people.",
-  verification_declined: "The verifier did not confirm, so nothing was issued.",
-  blood_type_mismatch: "The unit's blood group does not match the requisition.",
+  unit_expired: "That unit is expired or expires today, so it can't be issued.",
+  same_staff: "A second staff member must approve. You can't approve your own request.",
+  verification_declined: "Tick the confirmation box to approve.",
+  blood_type_mismatch: "That unit's blood group isn't compatible with the requisition.",
   requisition_closed: "That requisition is already closed.",
   wrong_hospital: "Both staff members must belong to the requesting hospital.",
+  request_expired: "That request timed out. The requester must raise a new one.",
+  request_not_pending: "That request was already handled.",
+  already_requested: "That unit already has a pending request.",
 };
 
 const TITLES = {
@@ -23,7 +26,8 @@ const TITLES = {
 };
 
 const PAGE_SIZE = 25;
-const state = { me: null, tab: "dashboard", unitPage: { items: [], total: 0 }, offset: 0, requisitions: [], issuances: [], audit: [], stats: null, hms: null, search: "" };
+const state = { me: null, tab: "dashboard", unitPage: { items: [], total: 0 }, offset: 0, requisitions: [], issuances: [], audit: [], stats: null, hms: null, search: "", requests: [] };
+const can = (permission) => Boolean(state.me?.permissions?.includes(permission));
 
 // Everything coming from the server goes through esc() before it touches innerHTML.
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -121,7 +125,7 @@ function renderInventory() {
       <td class="p-3 text-slate-500">${esc(u.collection_date)}</td>
       <td class="p-3 text-slate-500">${esc(u.expiry_date)}</td>
       <td class="p-3">${unitStatusChip(u.status)}</td>
-      <td class="p-3 text-right">${u.status === "Available"
+      <td class="p-3 text-right">${u.status === "Available" && can("issuance:handle")
         ? `<button data-action="quick-issue" data-unit="${u.unit_id}" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium transition">Issue</button>`
         : '<span class="text-slate-400 text-xs italic">Locked</span>'}</td>
     </tr>`).join("") || '<tr><td colspan="7" class="p-6 text-center text-slate-400">No units match.</td></tr>';
@@ -156,7 +160,7 @@ function renderRequisitions() {
       <td class="p-3 font-semibold text-slate-700">${r.issued_count} / ${r.quantity}</td>
       <td class="p-3">${chip(r.urgency_level, URGENCY_CLS[r.urgency_level] ?? URGENCY_CLS.Routine)}</td>
       <td class="p-3">${chip(r.status, REQ_STATUS_CLS[r.status] ?? "bg-amber-50 text-amber-600 border border-amber-100")}</td>
-      <td class="p-3 text-right">${isOpen(r)
+      <td class="p-3 text-right">${isOpen(r) && can("issuance:handle")
         ? `<button data-action="fulfill" data-req="${r.requisition_id}" class="px-3 py-1 bg-medical-600 hover:bg-medical-700 text-white rounded-lg text-xs font-medium transition">Fulfill</button>`
         : '<span class="text-slate-400 text-xs">Closed</span>'}</td>
     </tr>`).join("") || '<tr><td colspan="7" class="p-6 text-center text-slate-400">No requisitions yet.</td></tr>';
@@ -164,6 +168,7 @@ function renderRequisitions() {
 
 let selectToken = 0;
 async function renderIssueSelects(want = {}) {
+  if (!can("issuance:handle")) return;
   const reqSel = $("issue-req-select"), unitSel = $("issue-unit-select");
   const open = state.requisitions.filter(isOpen);
   const prevReq = want.reqId ?? Number(reqSel.value);
@@ -175,14 +180,32 @@ async function renderIssueSelects(want = {}) {
   const req = open.find((r) => r.requisition_id === Number(reqSel.value));
   const myToken = ++selectToken;  // ignore stale responses if the selection changed meanwhile
   let usable = [];
-  try { usable = await api.getIssuableUnits(req?.blood_type_requested); } catch { /* leave the list empty */ }
+  if (req) { try { usable = await api.getIssuableUnits(req.requisition_id); } catch { /* leave the list empty */ } }
   if (myToken !== selectToken) return;
 
   const prevUnit = want.unitId ?? Number(unitSel.value);
   unitSel.innerHTML = usable.length
-    ? usable.map((u) => `<option value="${u.unit_id}">${esc(unitLabel(u))}: ${esc(u.blood_type)} ${esc(u.component)} (exp ${esc(u.expiry_date)})</option>`).join("")
-    : '<option value="">No matching available units</option>';
+    ? usable.map((u) => `<option value="${u.unit_id}">${esc(unitLabel(u))}: ${esc(u.blood_type)} ${esc(u.component)} (exp ${esc(u.expiry_date)})${u.exact_match ? "" : " - compatible substitute"}</option>`).join("")
+    : '<option value="">No compatible available units</option>';
   if (usable.some((u) => u.unit_id === prevUnit)) unitSel.value = prevUnit;
+}
+
+const minutesLeft = (iso) => Math.max(0, Math.ceil((new Date(iso) - Date.now()) / 60000));
+
+function renderRequests() {
+  if (!can("issuance:handle")) return;
+  $("requests-table-body").innerHTML = state.requests.map((r) => {
+    const mine = r.requested_by_staff_id === state.me.staff_id;
+    return `<tr class="hover:bg-slate-50/80 transition">
+      <td class="p-3"><span class="font-semibold text-slate-700">UNIT-${r.unit_id}</span> ${groupChip(r.blood_type)}<div class="text-[10px] text-slate-400">${esc(r.component)}</div></td>
+      <td class="p-3 text-slate-600">REQ-${r.requisition_id}</td>
+      <td class="p-3 text-slate-700">${esc(mine ? "You" : r.requested_by_name)}</td>
+      <td class="p-3 text-slate-500">${minutesLeft(r.expires_at)} min</td>
+      <td class="p-3 text-right whitespace-nowrap">${mine
+        ? `<span class="text-slate-400 mr-2">Waiting for a colleague</span><button data-action="cancel-request" data-id="${r.request_id}" class="px-3 py-1 rounded-lg border border-slate-300 text-slate-700 font-medium hover:bg-slate-50">Cancel</button>`
+        : `<button data-action="open-approve" data-id="${r.request_id}" class="px-3 py-1 rounded-lg bg-medical-600 hover:bg-medical-700 text-white font-medium">Review</button>`}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="5" class="p-6 text-center text-slate-400">Nothing waiting for verification.</td></tr>';
 }
 
 function renderIssuances() {
@@ -222,19 +245,21 @@ function renderUser() {
   $("user-initials").textContent = me.full_name.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   $("user-name").textContent = me.full_name;
   $("user-meta").textContent = `${me.role} | STF-${me.staff_id}`;
-  $("issuer-box").textContent = `${me.full_name} (${me.username})`;
 }
 
 function renderAll() {
   renderStats(); renderDashboardAudit(); renderInventory(); renderRequisitions();
-  renderIssueSelects(); renderIssuances(); renderAudit(); renderHms();
+  renderIssueSelects(); renderRequests(); renderIssuances(); renderAudit(); renderHms();
 }
 
 async function loadAll() {
-  const [stats, unitPage, requisitions, issuances, audit, hms] = await Promise.all([
-    api.getStats(), api.getUnits(unitQuery()), api.getRequisitions(), api.getIssuances(), api.getAuditLogs(), api.getHmsStatus(),
+  // Only ask for what this role may see; the server enforces it, this just avoids pointless 403s.
+  const [stats, unitPage, requisitions, issuances, audit, hms, requests] = await Promise.all([
+    api.getStats(), api.getUnits(unitQuery()), api.getRequisitions(), api.getIssuances(),
+    can("audit:read") ? api.getAuditLogs() : [], api.getHmsStatus().catch(() => null),
+    can("issuance:handle") ? api.getIssuanceRequests() : [],
   ]);
-  Object.assign(state, { stats, unitPage, requisitions, issuances, audit, hms });
+  Object.assign(state, { stats, unitPage, requisitions, issuances, audit, hms, requests });
   renderAll();
 }
 
@@ -252,11 +277,22 @@ setInterval(() => {
 // ---------- Actions ----------
 const show = (id, on) => $(id).classList.toggle("hidden", !on);
 
+function applyPermissions() {
+  const hide = (el, hidden) => el?.classList.toggle("hidden", hidden);
+  hide(document.querySelector('[data-tab="issuance"]'), !can("issuance:handle"));
+  hide(document.querySelector('[data-tab="audit"]'), !can("audit:read"));
+  hide($("audit-card"), !can("audit:read"));
+  hide($("dashboard-issue-banner"), !can("issuance:handle"));
+  document.querySelectorAll('[data-action="open-req"]').forEach((b) => hide(b, !can("requisition:create")));
+  hide($("hms-link"), !can("issuance:handle"));
+}
+
 async function enterApp(staff) {
   state.me = staff;
   show("login-screen", false);
   show("app", true);
   renderUser();
+  applyPermissions();
   switchTab("dashboard");
   await refresh();
 }
@@ -286,6 +322,32 @@ const actions = {
   },
   "page-prev": () => { state.offset = Math.max(0, state.offset - PAGE_SIZE); loadUnits(); },
   "page-next": () => { state.offset += PAGE_SIZE; loadUnits(); },
+  "open-approve": (el) => {
+    const r = state.requests.find((x) => x.request_id === Number(el.dataset.id));
+    if (!r) return;
+    state.approving = r;
+    $("approve-summary").textContent = `UNIT-${r.unit_id} (${r.blood_type} ${r.component}) for REQ-${r.requisition_id}, requested by ${r.requested_by_name}.`;
+    $("approve-password").value = "";
+    $("approve-confirmed").checked = false;
+    showMsg("approve-error", "");
+    show("approve-modal", true);
+    $("approve-password").focus();
+  },
+  "close-approve": () => { state.approving = null; $("approve-password").value = ""; show("approve-modal", false); },
+  "cancel-request": async (el) => {
+    try { await api.cancelRequest(Number(el.dataset.id)); toast("Request cancelled."); await refresh(); }
+    catch (err) { toast(errText(err), "error"); await refresh({ silent: true }); }
+  },
+  "decline-request": async () => {
+    const r = state.approving;
+    if (!r) return;
+    try {
+      await api.declineRequest(r.request_id);
+      actions["close-approve"]();
+      toast("Request declined. Nothing was issued.");
+      await refresh();
+    } catch (err) { showMsg("approve-error", errText(err)); }
+  },
   fulfill: (el) => { switchTab("issuance"); renderIssueSelects({ reqId: Number(el.dataset.req) }); },
   "verify-chain": async () => {
     try {
@@ -346,23 +408,39 @@ $("issuance-form").addEventListener("submit", async (e) => {
   const submit = $("issue-submit");
   submit.disabled = true;
   try {
-    const res = await api.issueBloodUnit({
+    const r = await api.createIssuanceRequest({
       unit_id: Number($("issue-unit-select").value),
       requisition_id: Number($("issue-req-select").value),
-      verifier_username: $("verifier-username").value.trim(),
-      verifier_password: $("verifier-password").value,
-      verifier_confirmed: $("verifier-confirmed").checked,
     });
-    $("issuance-form").reset();
+    toast(`Request sent for UNIT-${r.unit_id}. A colleague must approve it from their own sign-in.`);
+    await refresh();
+  } catch (err) {
+    showMsg("issue-error", errText(err));
+    if (err.rule) await refresh({ silent: true }); // a blocked attempt is audit-logged server-side
+  } finally { submit.disabled = false; }
+});
+
+$("approve-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const r = state.approving;
+  if (!r) return;
+  showMsg("approve-error", "");
+  const submit = $("approve-submit");
+  submit.disabled = true;
+  try {
+    const res = await api.approveRequest(r.request_id, {
+      password: $("approve-password").value, confirmed: $("approve-confirmed").checked,
+    });
+    actions["close-approve"]();
     toast(res.hms_synced
       ? `Unit ${res.unit_id} issued. Requisition is ${res.requisition_status}. HMS synced.`
       : `Unit ${res.unit_id} issued. The HMS is unreachable, so the update is queued and will retry automatically.`,
       res.hms_synced ? "success" : "error");
     await refresh();
   } catch (err) {
-    showMsg("issue-error", errText(err));
-    $("verifier-password").value = "";
-    if (err.rule) await refresh(); // a blocked attempt is audit-logged server-side
+    showMsg("approve-error", errText(err));
+    $("approve-password").value = "";
+    if (err.rule && err.rule !== "password_incorrect") await refresh({ silent: true });
   } finally { submit.disabled = false; }
 });
 

@@ -16,6 +16,7 @@ class Hospital(Base):
     address: Mapped[str] = mapped_column(Text)
     contact_number: Mapped[str] = mapped_column(String(20))
     hms_sync_status: Mapped[str] = mapped_column(String(20), default="Disconnected")
+    hms_key_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
 
 
 class BloodBank(Base):
@@ -160,3 +161,18 @@ class MockHmsEvent(Base):
     state: Mapped[str] = mapped_column(String(12), default="Received")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class IssuanceRequest(Base):
+    __tablename__ = "issuance_request"
+
+    request_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    unit_id: Mapped[int] = mapped_column(ForeignKey("blood_unit.unit_id"))
+    requisition_id: Mapped[int] = mapped_column(ForeignKey("blood_requisition.requisition_id"))
+    requested_by_staff_id: Mapped[int] = mapped_column(ForeignKey("hospital_staff.staff_id"))
+    status: Mapped[str] = mapped_column(String(10), default="Pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_by_staff_id: Mapped[int | None] = mapped_column(ForeignKey("hospital_staff.staff_id"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_rule: Mapped[str | None] = mapped_column(String(40))

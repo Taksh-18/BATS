@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.deps import current_staff
+from app.deps import current_staff, require
 from app.models import BloodIssue, BloodRequisition, HospitalStaff
 from app.schemas import RequisitionCreate, RequisitionListItem, RequisitionRead
 from app.services import audit
@@ -32,7 +32,7 @@ async def list_requisitions(limit: int = Query(100, ge=1, le=500), db: AsyncSess
 
 @router.post("", response_model=RequisitionRead, status_code=201)
 async def create_requisition(body: RequisitionCreate, db: AsyncSession = Depends(get_db),
-                             me: HospitalStaff = Depends(current_staff)):
+                             me: HospitalStaff = Depends(require("requisition:create"))):
     req = BloodRequisition(
         hospital_id=me.hospital_id, staff_id=me.staff_id,
         blood_type_requested=body.blood_type_requested.value,

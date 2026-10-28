@@ -1,15 +1,17 @@
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import current_staff
 from app.models import BloodIssue, BloodRequisition, BloodUnit, HmsOutbox, HospitalStaff
-from app.schemas import BloodType, BloodUnitRead, StatsRead, UnitPage, UnitStatus
+from app.schemas import BloodType, BloodUnitRead, IssuableUnit, StatsRead, UnitPage, UnitStatus
 from app.services import audit
+from app.services.compat import acceptable_types
+from app.timeutil import today
 
 router = APIRouter(prefix="/api/v1", tags=["inventory"], dependencies=[Depends(current_staff)])
 
@@ -57,23 +59,31 @@ async def list_units(
     return UnitPage(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.get("/units/issuable", response_model=list[BloodUnitRead])
-async def issuable_units(blood_type: BloodType | None = None, db: AsyncSession = Depends(get_db)):
-    """Units that could be issued right now (available and not expired), for the issuance form."""
-    conds = [BloodUnit.status == "Available", BloodUnit.expiry_date >= date.today()]
-    if blood_type:
-        conds.append(BloodUnit.blood_type == blood_type.value)
-    return (await db.execute(
-        select(BloodUnit).where(*conds).order_by(BloodUnit.expiry_date, BloodUnit.unit_id).limit(100)
+@router.get("/units/issuable", response_model=list[IssuableUnit])
+async def issuable_units(requisition_id: int = Query(...), db: AsyncSession = Depends(get_db),
+                         me: HospitalStaff = Depends(current_staff)):
+    """Units that could be issued for this requisition right now: available, not expiring today,
+    and blood-group compatible. Exact matches first, then (Critical only) compatible substitutes."""
+    req = await db.get(BloodRequisition, requisition_id)
+    if req is None or req.hospital_id != me.hospital_id:
+        raise HTTPException(status_code=404, detail="Requisition not found")
+    units = (await db.execute(
+        select(BloodUnit).where(BloodUnit.status == "Available", BloodUnit.expiry_date > today())
+        .order_by(BloodUnit.expiry_date, BloodUnit.unit_id)
     )).scalars().all()
+    ok = [u for u in units if u.blood_type in acceptable_types(req.blood_type_requested, u.component, req.urgency_level)]
+    ok.sort(key=lambda u: u.blood_type != req.blood_type_requested)  # stable: exact matches first
+    return [IssuableUnit(**BloodUnitRead.model_validate(u).model_dump(),
+                         exact_match=u.blood_type == req.blood_type_requested) for u in ok[:100]]
 
 
 @router.get("/stats", response_model=StatsRead)
 async def stats(db: AsyncSession = Depends(get_db), me: HospitalStaff = Depends(current_staff)):
-    today = date.today()
+    day = today()
+    live = BloodUnit.status == "Available", BloodUnit.expiry_date > day  # expired units are not stock
     count = lambda q: db.scalar(q)  # noqa: E731
     by_type = dict((await db.execute(
-        select(BloodUnit.blood_type, func.count()).where(BloodUnit.status == "Available")
+        select(BloodUnit.blood_type, func.count()).where(*live)
         .group_by(BloodUnit.blood_type)
     )).all())
     open_reqs = BloodRequisition.hospital_id == me.hospital_id, \
@@ -81,7 +91,7 @@ async def stats(db: AsyncSession = Depends(get_db), me: HospitalStaff = Depends(
     return StatsRead(
         total_units=await count(select(func.count()).select_from(BloodUnit)),
         available_units=await count(
-            select(func.count()).select_from(BloodUnit).where(BloodUnit.status == "Available")),
+            select(func.count()).select_from(BloodUnit).where(*live)),
         active_requisitions=await count(select(func.count()).select_from(BloodRequisition).where(*open_reqs)),
         critical_requisitions=await count(
             select(func.count()).select_from(BloodRequisition)
@@ -93,7 +103,7 @@ async def stats(db: AsyncSession = Depends(get_db), me: HospitalStaff = Depends(
         expiring_soon=await count(
             select(func.count()).select_from(BloodUnit).where(
                 BloodUnit.status.in_(("Available", "Quarantined")),
-                BloodUnit.expiry_date.between(today, today + timedelta(days=EXPIRING_SOON_DAYS)))),
+                BloodUnit.expiry_date > day, BloodUnit.expiry_date <= day + timedelta(days=EXPIRING_SOON_DAYS))),
         available_by_type={t: by_type.get(t, 0) for t in BLOOD_TYPES},
         hms_pending=await count(
             select(func.count()).select_from(HmsOutbox)

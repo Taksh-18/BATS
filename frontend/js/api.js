@@ -1,5 +1,5 @@
 // API service layer: every call to the FastAPI backend goes through here.
-export const API_BASE = window.BATS_API_BASE || "http://localhost:8000";
+export const API_BASE = window.BATS_API_BASE ?? "";  // the API serves this page, so same-origin by default
 
 export class ApiError extends Error {
   constructor(status, rule, message) {
@@ -53,13 +53,15 @@ export const getUnits = (params = {}) => {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null));
   return request(`/api/v1/units?${qs}`);
 };
-export const getIssuableUnits = (bloodType) =>
-  request(`/api/v1/units/issuable${bloodType ? `?blood_type=${encodeURIComponent(bloodType)}` : ""}`);
+export const getIssuableUnits = (requisitionId) => request(`/api/v1/units/issuable?requisition_id=${encodeURIComponent(requisitionId)}`);
 export const getRequisitions = () => request("/api/v1/requisitions");
 export const createRequisition = (body) => request("/api/v1/requisitions", { method: "POST", body });
 export const getIssuances = () => request("/api/v1/issuances");
-export const issueBloodUnit = (body) => request("/api/v1/issuances", { method: "POST", body });
+export const createIssuanceRequest = (body) => request("/api/v1/issuance-requests", { method: "POST", body });
+export const getIssuanceRequests = () => request("/api/v1/issuance-requests");
+export const approveRequest = (id, body) => request(`/api/v1/issuance-requests/${id}/approve`, { method: "POST", body });
+export const declineRequest = (id) => request(`/api/v1/issuance-requests/${id}/decline`, { method: "POST" });
+export const cancelRequest = (id) => request(`/api/v1/issuance-requests/${id}/cancel`, { method: "POST" });
 export const getAuditLogs = () => request("/api/v1/audit-logs?limit=500");
 export const verifyAuditChain = () => request("/api/v1/audit-logs/verify");
 export const getHmsStatus = () => request("/mock-hms/status");
-export const toggleHms = () => request("/mock-hms/toggle", { method: "POST" });

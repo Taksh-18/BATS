@@ -9,7 +9,8 @@ CREATE TABLE hospital (
     address         TEXT         NOT NULL,
     contact_number  VARCHAR(20)  NOT NULL,
     hms_sync_status VARCHAR(20)  NOT NULL DEFAULT 'Disconnected'
-        CHECK (hms_sync_status IN ('Connected', 'Disconnected', 'Error'))
+        CHECK (hms_sync_status IN ('Connected', 'Disconnected', 'Error')),
+    hms_key_hash    CHAR(64) UNIQUE   -- SHA-256 of this hospital's HMS API key; NULL = no HMS integration
 );
 
 CREATE TABLE blood_bank (
@@ -29,7 +30,8 @@ CREATE TABLE admin (
 CREATE TABLE hospital_staff (
     staff_id        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     full_name       VARCHAR(120) NOT NULL,
-    role            VARCHAR(50)  NOT NULL,
+    role            VARCHAR(50)  NOT NULL
+        CHECK (role IN ('Doctor', 'Nurse', 'Technician', 'Blood Bank Admin')),
     username        VARCHAR(50)  NOT NULL UNIQUE,
     password_hash   VARCHAR(255) NOT NULL,
     hospital_id     BIGINT       NOT NULL REFERENCES hospital (hospital_id)
@@ -100,6 +102,23 @@ CREATE TABLE blood_issue (
     CONSTRAINT chk_two_person_rule
         CHECK (issued_by_staff_id <> verified_by_staff_id)
 );
+
+-- Two-person issuance: one staff member REQUESTS, a different one APPROVES from their own
+-- sign-in. The unit is only issued (and a blood_issue row created) on approval.
+CREATE TABLE issuance_request (
+    request_id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    unit_id                BIGINT NOT NULL REFERENCES blood_unit (unit_id),
+    requisition_id         BIGINT NOT NULL REFERENCES blood_requisition (requisition_id),
+    requested_by_staff_id  BIGINT NOT NULL REFERENCES hospital_staff (staff_id),
+    status                 VARCHAR(10) NOT NULL DEFAULT 'Pending'
+        CHECK (status IN ('Pending', 'Approved', 'Declined', 'Cancelled', 'Expired', 'Failed')),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at             TIMESTAMPTZ NOT NULL,
+    decided_by_staff_id    BIGINT REFERENCES hospital_staff (staff_id),
+    decided_at             TIMESTAMPTZ,
+    failure_rule           VARCHAR(40)
+);
+CREATE UNIQUE INDEX uq_one_pending_request_per_unit ON issuance_request (unit_id) WHERE status = 'Pending';
 
 -- Idempotency log for updates the hospital HMS sends back: replaying an event is a no-op.
 CREATE TABLE hms_inbound (

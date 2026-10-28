@@ -146,13 +146,32 @@ class IssueRead(ORMModel):
     issue_date: datetime
 
 
-class IssueRequest(BaseModel):
-    """The issuer is whoever holds the JWT; the verifier proves identity with their own credentials."""
+class IssuanceRequestCreate(BaseModel):
     unit_id: int
     requisition_id: int
-    verifier_username: str = Field(min_length=1, max_length=50)
-    verifier_password: str = Field(min_length=1, max_length=128)
-    verifier_confirmed: bool
+
+
+class ApproveBody(BaseModel):
+    """The approver is whoever holds the JWT; they re-enter their OWN password as a step-up check."""
+    password: str = Field(min_length=1, max_length=128)
+    confirmed: bool
+
+
+class IssuanceRequestRead(BaseModel):
+    request_id: int
+    unit_id: int
+    requisition_id: int
+    blood_type: BloodType
+    component: str
+    requested_by_staff_id: int
+    requested_by_name: str
+    status: str
+    created_at: datetime
+    expires_at: datetime
+
+
+class IssuableUnit(BloodUnitRead):
+    exact_match: bool  # False = a compatible substitute (Critical requisitions only)
 
 
 class IssueResponse(IssueRead):
@@ -179,10 +198,14 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class MeRead(StaffRead):
+    permissions: list[str]
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    staff: StaffRead
+    staff: MeRead
 
 
 # --- List views ------------------------------------------------------------

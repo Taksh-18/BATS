@@ -3,12 +3,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.deps import current_staff
+from app.deps import require
 from app.models import AuditLog
 from app.schemas import AuditRead, ChainStatus
 from app.services import audit
 
-router = APIRouter(prefix="/api/v1/audit-logs", tags=["audit"], dependencies=[Depends(current_staff)])
+router = APIRouter(prefix="/api/v1/audit-logs", tags=["audit"], dependencies=[Depends(require("audit:read"))])
 
 
 @router.get("", response_model=list[AuditRead])

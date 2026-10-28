@@ -3,13 +3,16 @@
 Both demo accounts share one well-known password, so never run this against a real deployment.
 """
 import asyncio
+import hashlib
 from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import SessionLocal, engine
 from app.models import BloodBank, BloodRequisition, BloodUnit, Donation, Donor, Hospital, HospitalStaff
 from app.security import hash_password
+from app.timeutil import today as day_today
 from app.services import audit
 
 DEMO_PASSWORD = "Bats@123"
@@ -32,14 +35,15 @@ REQUISITIONS = [("O+", 2, "Critical"), ("A+", 1, "Urgent"), ("B-", 3, "Routine")
 
 
 async def main() -> None:
-    today = date.today()
+    today = day_today()
     async with SessionLocal() as db:
         if (await db.execute(select(Hospital.hospital_id).limit(1))).first():
             print("Database already has data; refusing to seed twice.")
             return
 
         hospital = Hospital(name="Manipal Teaching Hospital", address="Dehmi Kalan, Jaipur",
-                            contact_number="0141-3999000", hms_sync_status="Connected")
+                            contact_number="0141-3999000", hms_sync_status="Connected",
+                            hms_key_hash=hashlib.sha256(settings.hms_api_key.encode()).hexdigest())
         bank = BloodBank(name="MUJ Central Blood Bank", location="Jaipur-Ajmer Expressway",
                          contact_number="0141-3999100")
         db.add_all([hospital, bank])
@@ -50,9 +54,11 @@ async def main() -> None:
                               password_hash=pw, hospital_id=hospital.hospital_id)
         rohit = HospitalStaff(full_name="Rohit Mehta", role="Technician", username="staff_rohit",
                               password_hash=pw, hospital_id=hospital.hospital_id)
+        admin = HospitalStaff(full_name="Anita Rao", role="Blood Bank Admin", username="staff_admin",
+                              password_hash=pw, hospital_id=hospital.hospital_id)
         donor = Donor(full_name="Rahul Singh", blood_type="A+", contact_number="9800000001",
                       email="rahul@example.com", date_of_birth=date(1995, 4, 12))
-        db.add_all([meera, rohit, donor])
+        db.add_all([meera, rohit, admin, donor])
         await db.flush()
 
         for i, (blood_type, component, age, shelf, status) in enumerate(UNITS, start=1):
@@ -71,7 +77,7 @@ async def main() -> None:
 
         await audit.record(db, None, "system", "SYSTEM_SEED", "demo data loaded")
         await db.commit()
-        print(f"Seeded. Demo logins: staff_meera / staff_rohit, password {DEMO_PASSWORD}")
+        print(f"Seeded. Demo logins: staff_meera (Nurse), staff_rohit (Technician), staff_admin (Blood Bank Admin); password {DEMO_PASSWORD}")
     await engine.dispose()
 
 
