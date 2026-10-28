@@ -1,0 +1,11 @@
+# secrets and local state: never commit
+.env
+*.log
+backend/audit_anchor.log
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# personal details (registration number): kept local
+BATS_Project_Context.md
