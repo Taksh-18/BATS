@@ -4,9 +4,9 @@
   "installCommand": null,
   "outputDirectory": "frontend",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://BACKEND_HOST/api/:path*" },
-    { "source": "/mock-hms/:path*", "destination": "https://BACKEND_HOST/mock-hms/:path*" },
-    { "source": "/health", "destination": "https://BACKEND_HOST/health" }
+    { "source": "/api/:path*", "destination": "https://bats-api.onrender.com/api/:path*" },
+    { "source": "/mock-hms/:path*", "destination": "https://bats-api.onrender.com/mock-hms/:path*" },
+    { "source": "/health", "destination": "https://bats-api.onrender.com/health" }
   ],
   "headers": [
     {
